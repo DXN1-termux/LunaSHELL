@@ -1,73 +1,91 @@
 #!/bin/bash
-# LunaSHELL Echo - Advanced Predictive Engine
-# -------------------------------------------
-# Sophisticated command weighting, context-switching, and probability engine.
+# LunaSHELL Echo - Advanced Predictive Engine v1.0
+# -----------------------------------------------
+# Sophisticated command weighting, context-switching, and Markov-chain probability engine.
 
-HISTORY="$HOME/.bash_history"
-LUNA_ROOT="$HOME/.luna"
+LUNA_ROOT="${LUNA_HOME:-$HOME/.luna}"
 CACHE_DIR="$LUNA_ROOT/cache"
-WEIGHTS="$CACHE_DIR/weights.db"
+MARKOV_DB="$CACHE_DIR/markov.db"
+HISTORY_FILE="$HOME/.bash_history"
 
-# --- Initialization of Cognitive Weights ---
-# Maps command sequences to probability scores based on user patterns.
-init_weights() {
-    [ -f "$WEIGHTS" ] || touch "$WEIGHTS"
+# --- Initialization ---
+init_engine() {
+    mkdir -p "$CACHE_DIR"
+    [ -f "$MARKOV_DB" ] || touch "$MARKOV_DB"
 }
 
 # --- Context Detection ---
-# Determines the 'Lunar Phase' based on active processes/files/time.
 detect_phase() {
-    local load=$(uptime | awk '{print $10}' | tr -d ',')
-    if [ "$(date +%H)" -lt 6 ]; then
+    local hour=$(date +%H)
+    local load=$(uptime | awk -F'load average:' '{ print $2 }' | awk -F',' '{ print $1 }' | xargs)
+    
+    if [ "$hour" -ge 22 ] || [ "$hour" -lt 6 ]; then
         echo "NOCTURNAL"
-    elif (( $(echo "$load > 2.0" | bc -l) )); then
+    elif (( $(echo "$load > 1.5" | bc -l 2>/dev/null || echo 0) )); then
         echo "FULL_MOON"
     else
         echo "WAXING"
     fi
 }
 
+# --- Training / Learning Loop ---
+# Analyzes history to build Markov chains (command sequences)
+train() {
+    init_engine
+    echo "Training Luna Echo..."
+    
+    # Process history to find sequences (cmd1 -> cmd2)
+    # We take the last 500 commands for relevance
+    tail -n 500 "$HISTORY_FILE" | awk '
+    {
+        if (prev != "") {
+            print prev "|" $0
+        }
+        prev = $0
+    }' | sort | uniq -c | sort -rn > "$MARKOV_DB"
+}
+
 # --- Predictive Algorithm ---
-# Multi-stage filtering: Context Phase -> Sequence Frequency -> Recent History
 predict() {
     local input="$1"
     local phase=$(detect_phase)
     
-    # Heuristic 1: Phase-weighted lookup
-    # Heuristic 2: Markov chain simulation for command sequences
-    # Heuristic 3: Time-decay frequency analysis
+    # If input is empty, suggest based on last command (Markov)
+    if [ -z "$input" ]; then
+        local last_cmd=$(tail -n 1 "$HISTORY_FILE")
+        if [ -n "$last_cmd" ]; then
+            grep "|$last_cmd" "$MARKOV_DB" | head -n 3 | awk -F'|' '{print $2}'
+            return
+        fi
+    fi
+
+    # Phase-weighted frequency analysis
+    # In NOCTURNAL phase, we might prioritize maintenance or monitoring commands
+    # (This is a simplified heuristic for now)
     
     echo "--- [ Luna Echo | Phase: $phase ] ---"
-    # Filter and weight commands based on the current system context
-    grep "^$input" "$HISTORY" | tail -n 20 | awk '{
-        count[$0]++;
-    } END {
-        for (cmd in count) print count[cmd], cmd
-    }' | sort -rn | head -n 5 | cut -d' ' -f2-
-}
-
-# --- Training / Learning Loop ---
-# Records command success to build user behavior profile
-learn() {
-    local prev=$1
-    local next=$2
-    # Update local weighted cache for Markov-chain style predictions
-    echo "$prev->$next" >> "$WEIGHTS"
-}
-
-# --- Main Engine ---
-# High-speed prediction lookup
-luna_echo() {
-    init_weights
-    if [ -z "$1" ]; then
-        echo "Usage: luna_echo [partial_cmd]"
-        return 1
+    
+    # 1. Check Markov chains for likely next command starting with input
+    local last_cmd=$(tail -n 1 "$HISTORY_FILE")
+    if [ -n "$last_cmd" ]; then
+        grep " $last_cmd|$input" "$MARKOV_DB" | head -n 2 | awk -F'|' '{print $2}'
     fi
-    predict "$1"
+    
+    # 2. Fallback to frequency analysis
+    grep "^$input" "$HISTORY_FILE" | tail -n 50 | sort | uniq -c | sort -rn | head -n 3 | awk '{$1=""; print $0}' | sed 's/^ //'
 }
 
-if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
-    luna_echo "$@"
-fi
+# --- Main Entry ---
+case "$1" in
+    "--train")
+        train
+        ;;
+    "--predict")
+        predict "$2"
+        ;;
+    *)
+        predict "$1"
+        ;;
+esac
 EOF
 # Updated Sun May 10 03:53:00 CEST 2026

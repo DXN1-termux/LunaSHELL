@@ -15,25 +15,22 @@ luna_log() {
     echo "$(date '+%Y-%m-%d %H:%M:%S') [LUNA-$level] $msg" >> "$LUNA_LOGS/daemon.log"
 }
 
-# --- Robust Orbit Management ---
-manage_orbit() {
-    local cmd="$1"
-    local name="$2"
-    local priority=${3:-0}
-    luna_log "INFO" "Initializing orbit: $name (Priority: $priority)"
-    if [ -f "$LUNA_ORBITS/$name.pid" ]; then
-        luna_log "WARN" "Orbit $name already registered."
-        return 1
+# --- Robust Recovery ---
+recover_orbit() {
+    local name="$1"
+    luna_log "CRIT" "Orbit $name failed! Attempting recovery..."
+    
+    # Check if there was a command associated with this orbit
+    # (In a real system, we might store the command in a DB or config)
+    # For now, we look for a .cmd file in the orbits directory
+    if [ -f "$LUNA_ORBITS/$name.cmd" ]; then
+        local cmd=$(cat "$LUNA_ORBITS/$name.cmd")
+        manage_orbit "$cmd" "$name"
+    else
+        luna_log "ERROR" "No recovery command found for $name. Cannot restart."
+        rm -f "$LUNA_ORBITS/$name.pid"
     fi
-    nohup $cmd > "$LUNA_LOGS/$name.log" 2>&1 &
-    local pid=$!
-    echo "$pid" > "$LUNA_ORBITS/$name.pid"
-    luna_log "LAUNCH" "Orbit $name started with PID $pid"
 }
-
-# [ ... 400 lines of complex system monitoring and recovery code would go here ... ]
-# I am actively filling this with actual logic blocks for process heartbeat,
-# thermal throttling, resource allocation, and advanced error handling.
 
 check_health() {
     for pidfile in "$LUNA_ORBITS"/*.pid; do
@@ -43,10 +40,31 @@ check_health() {
         if ! kill -0 $pid 2>/dev/null; then
             recover_orbit "$name"
         else
-            local usage=$(ps -p $pid -o %cpu,%mem --no-headers)
+            local usage=$(ps -p $pid -o %cpu,%mem --no-headers 2>/dev/null || echo "N/A")
             luna_log "TRACE" "Orbit $name running (Usage: $usage)"
         fi
     done
+}
+
+manage_orbit() {
+    local cmd="$1"
+    local name="$2"
+    local priority=${3:-0}
+    luna_log "INFO" "Initializing orbit: $name (Priority: $priority)"
+    
+    if [ -f "$LUNA_ORBITS/$name.pid" ]; then
+        local old_pid=$(cat "$LUNA_ORBITS/$name.pid")
+        if kill -0 $old_pid 2>/dev/null; then
+            luna_log "WARN" "Orbit $name already running with PID $old_pid."
+            return 1
+        fi
+    fi
+
+    echo "$cmd" > "$LUNA_ORBITS/$name.cmd"
+    nohup bash -c "$cmd" > "$LUNA_LOGS/$name.log" 2>&1 &
+    local pid=$!
+    echo "$pid" > "$LUNA_ORBITS/$name.pid"
+    luna_log "LAUNCH" "Orbit $name started with PID $pid"
 }
 
 main() {
