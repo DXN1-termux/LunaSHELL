@@ -1,33 +1,50 @@
 #!/bin/bash
 # LunaSHELL Core Engine v0.1-beta
 # -------------------------------
-# This script contains the primary logic for LunaSHELL.
-# Purpose: Handle environment initialization, process management, 
-# and the "Lunar Echo" prediction engine.
+# Modular daemon and process orchestrator
 
-LUNA_VERSION="0.1-beta"
 LUNA_HOME="$HOME/.luna"
+LUNA_ORBITS="$LUNA_HOME/orbits"
+LUNA_LOGS="$LUNA_HOME/logs"
 
-log_info() {
-    echo -e "[🌛] $1"
+# Logger
+luna_log() {
+    echo "$(date '+%Y-%m-%d %H:%M:%S') [LUNA-$1] $2" >> "$LUNA_LOGS/daemon.log"
 }
 
-init_luna() {
-    log_info "Initializing LunaSHELL core components..."
-    mkdir -p "$LUNA_HOME/orbits"
-    mkdir -p "$LUNA_HOME/logs"
-    mkdir -p "$LUNA_HOME/cache"
-    # Additional 1000+ lines logic to be implemented here...
+# Process Controller
+manage_orbit() {
+    local cmd="$1"
+    local name="$2"
+    luna_log "INFO" "Launching orbit: $name"
+    nohup $cmd > "$LUNA_LOGS/$name.log" 2>&1 &
+    echo $! > "$LUNA_ORBITS/$name.pid"
 }
 
-predict_command() {
-    local input="$1"
-    # Predictive engine logic...
+check_orbits() {
+    for pidfile in "$LUNA_ORBITS"/*.pid; do
+        if [ -f "$pidfile" ]; then
+            pid=$(cat "$pidfile")
+            if ! kill -0 $pid 2>/dev/null; then
+                luna_log "WARN" "Orbit ${pidfile##*/} died. Restarting..."
+                # Logic to recover process
+            fi
+        fi
+    done
 }
 
-# Core daemon loop
-while true; do
-    # Monitoring logic...
-    sleep 1
-done
-EOF
+# Main Engine Execution
+main() {
+    mkdir -p "$LUNA_ORBITS" "$LUNA_LOGS"
+    luna_log "START" "LunaSHELL Engine Online"
+    
+    while true; do
+        check_orbits
+        sleep 5
+    done
+}
+
+# Ensure file is executed correctly
+if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
+    main "$@"
+fi
